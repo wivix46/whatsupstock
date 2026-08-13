@@ -4,7 +4,6 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 import html
-import textwrap
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 st.set_page_config(page_title="Whatsupstock", page_icon="📊", layout="wide")
@@ -343,8 +342,8 @@ if view == "Home":
 
         sector_names = list(sector_data.keys())
 
-        for row_start in range(0, len(sector_names), 4):
-            row_sectors = sector_names[row_start:row_start + 4]
+        for row_start in range(0, len(sector_names), 5):
+            row_sectors = sector_names[row_start:row_start + 5]
             cols = st.columns(len(row_sectors), gap="small")
 
             for offset, (col, sector_name) in enumerate(zip(cols, row_sectors)):
@@ -433,12 +432,7 @@ if view == "Home":
                 """
 
                 with col:
-                    compact_card_html = " ".join(
-                        line.strip()
-                        for line in textwrap.dedent(card_html).splitlines()
-                        if line.strip()
-                    )
-                    st.markdown(compact_card_html, unsafe_allow_html=True)
+                    st.markdown(card_html, unsafe_allow_html=True)
 
         st.divider()
 
@@ -450,46 +444,8 @@ if view == "Home":
         with left:
             chart_df = sector_summary[["Sector", "Avg Analyst Upside"]].copy()
             chart_df["Avg Analyst Upside"] *= 100
-
-            valid_upside = chart_df["Avg Analyst Upside"].dropna()
-            max_abs = max(float(valid_upside.abs().max()), 1.0) if not valid_upside.empty else 1.0
-
-            static_rows = ""
-            for _, chart_row in chart_df.iterrows():
-                sector_label = html.escape(str(chart_row["Sector"]))
-                value = chart_row["Avg Analyst Upside"]
-
-                if pd.isna(value):
-                    value_text = "—"
-                    width = 0
-                    bar_color = "#94a3b8"
-                else:
-                    value_text = f"{value:+.1f}%"
-                    width = min(abs(float(value)) / max_abs * 100, 100)
-                    bar_color = "#2563eb" if value >= 0 else "#dc2626"
-
-                static_rows += (
-                    f'<div style="display:grid;grid-template-columns:150px minmax(80px,1fr) 58px;'
-                    f'align-items:center;gap:8px;margin:8px 0;">'
-                    f'<div style="font-size:12px;color:#334155;white-space:nowrap;overflow:hidden;'
-                    f'text-overflow:ellipsis;" title="{sector_label}">{sector_label}</div>'
-                    f'<div style="height:18px;background:#eef2f7;border-radius:4px;overflow:hidden;">'
-                    f'<div style="height:100%;width:{width:.1f}%;background:{bar_color};'
-                    f'border-radius:4px;"></div></div>'
-                    f'<div style="font-size:12px;font-weight:650;text-align:right;color:#334155;">'
-                    f'{value_text}</div></div>'
-                )
-
-            static_chart_html = (
-                '<div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;'
-                'background:white;min-height:500px;">'
-                '<div style="font-size:12px;color:#64748b;margin-bottom:10px;">'
-                'Average analyst upside by sector</div>'
-                + static_rows +
-                '</div>'
-            )
-
-            st.markdown(static_chart_html, unsafe_allow_html=True)
+            st.bar_chart(chart_df.set_index("Sector")["Avg Analyst Upside"], horizontal=True, height=520)
+            st.caption("Average analyst upside by sector.")
         with right:
             sector_table = sector_summary[["Sector", "Median P/E", "Median Forward P/E", "Avg Analyst Upside", "Avg Dividend Yield"]].copy()
             sector_table["Avg Analyst Upside"] *= 100
