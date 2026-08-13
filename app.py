@@ -311,6 +311,39 @@ def add_internal_score(df):
 
     return out
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_home_dataset():
+    """
+    Build the Home dataset once.
+    Top 10, Top 3 cards and Sector Overview all reuse this same snapshot.
+    No extra Yahoo/yfinance calls are made by those visual sections.
+    """
+    frames = []
+
+    for sector_name in HOME_SECTORS:
+        symbols = SECTORS[sector_name]
+
+        sector_df = load_sector(
+            tuple(symbols),
+            max_stocks=5
+        )
+
+        if sector_df.empty:
+            continue
+
+        sector_df = add_internal_score(sector_df)
+        sector_df.loc[sector_df["P/E"] <= 0, "P/E"] = np.nan
+        sector_df.loc[sector_df["Forward P/E"] <= 0, "Forward P/E"] = np.nan
+        sector_df["Sector"] = sector_name
+        sector_df["Sector Forward P/E"] = sector_df["Forward P/E"].median(skipna=True)
+
+        frames.append(sector_df)
+
+    if not frames:
+        return pd.DataFrame()
+
+    return pd.concat(frames, ignore_index=True)
+
 def style_forward_pe(v, median):
     if pd.isna(v) or pd.isna(median) or median == 0:
         return ""
@@ -347,43 +380,40 @@ if view == "Home":
 
     refresh_col, _ = st.columns([1.1, 5])
     with refresh_col:
-        if st.button("↻ Refresh Yahoo data", use_container_width=True):
+        if st.button("↻ Refresh Home data", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
-    all_rows, sector_rows, sector_data = [], [], {}
-    progress = st.progress(0, text="Loading sectors...")
+    with st.spinner("Loading Home market and analyst data..."):
+        combined = load_home_dataset()
 
-    for i, sector_name in enumerate(HOME_SECTORS, start=1):
-        symbols = SECTORS[sector_name]
-        sector_df = load_sector(
-            tuple(symbols),
-            max_stocks=5
-        )
-        if not sector_df.empty:
-                sector_df = add_internal_score(sector_df)
-                sector_df.loc[sector_df["P/E"] <= 0, "P/E"] = np.nan
-                sector_df.loc[sector_df["Forward P/E"] <= 0, "Forward P/E"] = np.nan
-                sector_df["Sector"] = sector_name
-                sector_df["Sector Forward P/E"] = sector_df["Forward P/E"].median(skipna=True)
-                all_rows.append(sector_df)
-                sector_data[sector_name] = sector_df.copy()
-                sector_rows.append({
-                    "Sector": sector_name,
-                    "Sector Rating": sector_df["Internal Rating"].mean(),
-                    "Median P/E": sector_df["P/E"].median(skipna=True),
-                    "Median Forward P/E": sector_df["Forward P/E"].median(skipna=True),
-                    "Avg Analyst Upside": sector_df["Analyst Upside"].mean(skipna=True),
-                    "Avg Dividend Yield": sector_df["Forward Dividend Yield"].mean(skipna=True),
-                })
-        progress.progress(i / len(HOME_SECTORS), text=f"Loading sectors... {i}/{len(HOME_SECTORS)}")
-    progress.empty()
+    if not combined.empty:
+        sector_data = {
+            sector_name: combined[combined["Sector"] == sector_name].copy().reset_index(drop=True)
+            for sector_name in HOME_SECTORS
+            if not combined[combined["Sector"] == sector_name].empty
+        }
 
-    if all_rows:
-        combined = pd.concat(all_rows, ignore_index=True)
+        sector_rows = []
+        for sector_name in HOME_SECTORS:
+            if sector_name not in sector_data:
+                continue
+
+            sector_df = sector_data[sector_name]
+
+            sector_rows.append({
+                "Sector": sector_name,
+                "Sector Rating": sector_df["Internal Rating"].mean(),
+                "Median P/E": sector_df["P/E"].median(skipna=True),
+                "Median Forward P/E": sector_df["Forward P/E"].median(skipna=True),
+                "Avg Analyst Upside": sector_df["Analyst Upside"].mean(skipna=True),
+                "Avg Dividend Yield": sector_df["Forward Dividend Yield"].mean(skipna=True),
+            })
+
+    if not combined.empty:
 
         # 1. All Sectors
         st.subheader("Top 10 — All Sectors")
-        st.caption("Highest Internal Ratings across the 9 sectors shown on the Home page.")
+        st.caption("Highest Internal Ratings from the single cached Home dataset.")
         top10 = combined.sort_values(["Internal Rating", "Analyst Upside"], ascending=[False, False], na_position="last").head(10).reset_index(drop=True)
         top_display = top10[["Ticker", "Company", "Sector", "Price", "Forward P/E", "Sector Forward P/E", "Forward Dividend Yield", "Analyst Upside", "Internal Rating"]].copy()
         top_display["Forward Dividend Yield"] *= 100
@@ -395,7 +425,7 @@ if view == "Home":
 
         # 2. Top 3 — Each Home Sector
         st.subheader("Top 3 — Each Sector")
-        st.caption("Top 3 companies by Internal Rating in each Home sector.")
+        st.caption("Top 3 companies by Internal Rating, using the same Home dataset as the Top 10.")
 
         sector_icons = {
             "Restaurants": "🍽️",
