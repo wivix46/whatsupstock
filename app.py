@@ -5,6 +5,7 @@ import numpy as np
 import yfinance as yf
 import html
 import textwrap
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 st.set_page_config(page_title="Whatsupstock", page_icon="📊", layout="wide")
@@ -101,10 +102,17 @@ def get_avg_volume(ticker_obj, info):
 def fetch_one(symbol):
     t = yf.Ticker(symbol)
 
-    try:
-        info = t.info or {}
-    except Exception:
-        info = {}
+    info = {}
+    for attempt in range(3):
+        try:
+            info = t.info or {}
+            # A valid response should normally contain at least one of these.
+            if any(info.get(k) is not None for k in ("marketCap", "forwardPE", "trailingPE", "shortName", "longName")):
+                break
+        except Exception:
+            info = {}
+        if attempt < 2:
+            time.sleep(0.6 * (attempt + 1))
 
     price = safe_num(
         info.get("currentPrice")
@@ -169,9 +177,17 @@ def fetch_one(symbol):
         "Analyst Upside": upside,
         "Avg Volume": avg_volume,
         "Dollar Volume": dollar_volume,
+        "Data Quality": (
+            "OK"
+            if sum(
+                not pd.isna(x)
+                for x in [market_cap, trailing_pe, forward_pe, eps, target_mean]
+            ) >= 2
+            else "Incomplete"
+        ),
     }
 
-@st.cache_data(ttl=900, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_sector(symbols):
     rows = []
     with ThreadPoolExecutor(max_workers=6) as executor:
@@ -232,6 +248,14 @@ def add_internal_score(df):
         + 0.10 * dividend_score
     ).round(0)
 
+    # If Yahoo returned too little information, do not show a misleading neutral 50.
+    core_available = (
+        out[["P/E", "Forward P/E", "Analyst Upside", "Forward Dividend Yield"]]
+        .notna()
+        .sum(axis=1)
+    )
+    out.loc[core_available == 0, "Internal Rating"] = np.nan
+
     return out
 
 def style_forward_pe(v, median):
@@ -279,6 +303,9 @@ if view == "Home":
             sector_df = sector_df.sort_values("Market Cap", ascending=False, na_position="last").head(MAX_STOCKS).reset_index(drop=True)
             if not sector_df.empty:
                 sector_df = add_internal_score(sector_df)
+                sector_df = sector_df[
+                    sector_df["Internal Rating"].notna()
+                ].copy()
                 sector_df.loc[sector_df["P/E"] <= 0, "P/E"] = np.nan
                 sector_df.loc[sector_df["Forward P/E"] <= 0, "Forward P/E"] = np.nan
                 sector_df["Sector"] = sector_name
