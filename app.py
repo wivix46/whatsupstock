@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 import html
+import textwrap
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 st.set_page_config(page_title="Whatsupstock", page_icon="📊", layout="wide")
@@ -432,7 +433,7 @@ if view == "Home":
                 """
 
                 with col:
-                    st.markdown(card_html, unsafe_allow_html=True)
+                    st.markdown(textwrap.dedent(card_html).strip(), unsafe_allow_html=True)
 
         st.divider()
 
