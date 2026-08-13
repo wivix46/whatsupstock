@@ -104,45 +104,80 @@ def batch_market_data(symbols_tuple):
     return pd.DataFrame(rows)
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=21600, show_spinner=False)
 def fetch_fundamentals(symbol):
     """
-    One detailed Yahoo/yfinance call per selected ticker.
-    Analyst target fields are taken from the same info payload whenever available,
-    avoiding a second analyst-target request.
+    Robust per-ticker fundamental snapshot.
+    Cached for 6 hours. Incomplete Yahoo responses are retried and are not
+    considered valid merely because an object was returned.
     """
-    info = {}
+    best = {}
 
-    # Small retry, deliberately sequential inside each ticker.
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             t = yf.Ticker(symbol)
-            info = t.info or {}
-            if info:
-                break
-        except Exception:
-            info = {}
+            info = t.get_info() or {}
 
-        if attempt == 0:
-            time.sleep(0.4)
+            # Keep the richest response seen so far.
+            if len(info) > len(best):
+                best = info
+
+            # Require at least some genuinely useful fields before accepting.
+            useful = sum(
+                info.get(k) is not None
+                for k in (
+                    "marketCap",
+                    "trailingPE",
+                    "forwardPE",
+                    "trailingEps",
+                    "targetMeanPrice",
+                    "recommendationKey",
+                    "shortName",
+                    "longName",
+                )
+            )
+
+            if useful >= 4:
+                best = info
+                break
+
+        except Exception:
+            pass
+
+        # Back off progressively to reduce Yahoo throttling.
+        time.sleep(0.8 * (attempt + 1))
+
+    info = best or {}
 
     market_cap = safe_num(info.get("marketCap"))
     trailing_pe = safe_num(info.get("trailingPE"))
     forward_pe = safe_num(info.get("forwardPE"))
     eps = safe_num(info.get("trailingEps"))
-
     dividend_rate = safe_num(info.get("dividendRate"))
-
     rating = rating_label(info)
 
-    # Prefer target fields already present in the info payload.
     target_mean = safe_num(info.get("targetMeanPrice"))
     target_high = safe_num(info.get("targetHighPrice"))
     target_low = safe_num(info.get("targetLowPrice"))
 
+    # Only make the extra analyst-target request if the main info payload
+    # did not include a mean target.
+    if pd.isna(target_mean):
+        try:
+            t = yf.Ticker(symbol)
+            targets = t.get_analyst_price_targets()
+            if isinstance(targets, dict):
+                target_mean = safe_num(targets.get("mean"))
+                target_high = safe_num(targets.get("high"))
+                target_low = safe_num(targets.get("low"))
+        except Exception:
+            pass
+
+    company = info.get("shortName") or info.get("longName") or symbol
+
     return {
         "Ticker": symbol,
-        "Company": info.get("shortName") or info.get("longName") or symbol,
+        "Company": company,
         "Market Cap": market_cap,
         "P/E": trailing_pe,
         "Forward P/E": forward_pe,
@@ -158,41 +193,34 @@ def fetch_fundamentals(symbol):
 @st.cache_data(ttl=1800, show_spinner=False)
 def load_sector(symbols_tuple, max_stocks=MAX_STOCKS):
     """
-    Load up to max_stocks from the curated sector universe.
-    No liquidity filter is applied.
+    Load a sector without liquidity filtering.
+    Prices are fetched in one batch; fundamentals are then fetched sequentially
+    to avoid overwhelming Yahoo with concurrent requests.
     """
-    symbols = list(symbols_tuple)
+    symbols = list(symbols_tuple)[:int(max_stocks)]
+
     market = batch_market_data(tuple(symbols))
     if market.empty:
-        return pd.DataFrame()
-
-    order_map = {symbol: i for i, symbol in enumerate(symbols)}
-    market["_order"] = market["Ticker"].map(order_map)
-
-    selected = (
-        market
-        .sort_values("_order")
-        .head(int(max_stocks))
-        .reset_index(drop=True)
-    )
-
-    selected_symbols = selected["Ticker"].tolist()
+        market = pd.DataFrame({"Ticker": symbols, "Batch Price": [np.nan] * len(symbols)})
 
     fundamentals = []
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {
-            executor.submit(fetch_fundamentals, symbol): symbol
-            for symbol in selected_symbols
-        }
-        for future in as_completed(futures):
-            symbol = futures[future]
-            try:
-                fundamentals.append(future.result())
-            except Exception:
-                fundamentals.append({"Ticker": symbol, "Company": symbol})
+
+    for idx, symbol in enumerate(symbols):
+        try:
+            fundamentals.append(fetch_fundamentals(symbol))
+        except Exception:
+            fundamentals.append({"Ticker": symbol, "Company": symbol})
+
+        # Gentle spacing between ticker-level fundamental calls.
+        if idx < len(symbols) - 1:
+            time.sleep(0.18)
 
     fdf = pd.DataFrame(fundamentals)
-    out = selected.merge(fdf, on="Ticker", how="left")
+    out = market.merge(fdf, on="Ticker", how="outer")
+
+    order_map = {symbol: i for i, symbol in enumerate(symbols)}
+    out["_order"] = out["Ticker"].map(order_map)
+    out = out.sort_values("_order").reset_index(drop=True)
 
     out["Price"] = out["Batch Price"]
 
@@ -308,6 +336,12 @@ view = st.radio("View", ["Home", "Sector Detail"], horizontal=True, label_visibi
 if view == "Home":
     st.title("Whatsupstock")
     st.caption("Simple stock comparison by sector")
+
+    refresh_col, _ = st.columns([1.1, 5])
+    with refresh_col:
+        if st.button("↻ Refresh Yahoo data", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
     all_rows, sector_rows, sector_data = [], [], {}
     progress = st.progress(0, text="Loading sectors...")
 
@@ -537,7 +571,7 @@ if view == "Home":
             st.dataframe(sector_table.style.format({"Median P/E":"{:.1f}x", "Median Fwd P/E":"{:.1f}x", "Analyst Upside":"{:+.1f}%", "Dividend Yield":"{:.1f}%"}, na_rep="—"), use_container_width=True, hide_index=True, height=520)
 
         st.divider()
-        st.caption("Data: Yahoo Finance via yfinance · For informational purposes only · Market and analyst data may be delayed or unavailable.")
+        st.caption("Data: Yahoo Finance via yfinance · For informational purposes only · Market and analyst data may be delayed or temporarily unavailable. Cached ticker snapshots are used to improve stability.")
     else:
         st.warning("No companies were available for this view.")
     st.stop()
