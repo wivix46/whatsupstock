@@ -5,7 +5,6 @@ import numpy as np
 import yfinance as yf
 import html
 import textwrap
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 st.set_page_config(page_title="Whatsupstock", page_icon="📊", layout="wide")
@@ -102,17 +101,10 @@ def get_avg_volume(ticker_obj, info):
 def fetch_one(symbol):
     t = yf.Ticker(symbol)
 
-    info = {}
-    for attempt in range(3):
-        try:
-            info = t.info or {}
-            # A valid response should normally contain at least one of these.
-            if any(info.get(k) is not None for k in ("marketCap", "forwardPE", "trailingPE", "shortName", "longName")):
-                break
-        except Exception:
-            info = {}
-        if attempt < 2:
-            time.sleep(0.6 * (attempt + 1))
+    try:
+        info = t.info or {}
+    except Exception:
+        info = {}
 
     price = safe_num(
         info.get("currentPrice")
@@ -177,14 +169,6 @@ def fetch_one(symbol):
         "Analyst Upside": upside,
         "Avg Volume": avg_volume,
         "Dollar Volume": dollar_volume,
-        "Data Quality": (
-            "OK"
-            if sum(
-                not pd.isna(x)
-                for x in [market_cap, trailing_pe, forward_pe, eps, target_mean]
-            ) >= 2
-            else "Incomplete"
-        ),
     }
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -227,39 +211,26 @@ def add_internal_score(df):
     pe_for_score = out["P/E"].where(out["P/E"] > 0, np.nan)
     fwd_pe_for_score = out["Forward P/E"].where(out["Forward P/E"] > 0, np.nan)
 
-    components = pd.DataFrame(index=out.index)
-    components["P/E"] = inverse_percentile(pe_for_score)
-    components["Forward P/E"] = inverse_percentile(fwd_pe_for_score)
-    components["Analyst Upside"] = direct_percentile(out["Analyst Upside"])
-    components["Analyst Rating"] = analyst_rating_score(out["Analyst Rating"])
-    components["Dividend Yield"] = direct_percentile(out["Forward Dividend Yield"])
+    pe_score = inverse_percentile(pe_for_score)
+    fwd_pe_score = inverse_percentile(fwd_pe_for_score)
+    upside_score = direct_percentile(out["Analyst Upside"])
+    rating_score = analyst_rating_score(out["Analyst Rating"])
+    dividend_score = direct_percentile(out["Forward Dividend Yield"])
 
-    weights = {
-        "P/E": 0.15,
-        "Forward P/E": 0.30,
-        "Analyst Upside": 0.30,
-        "Analyst Rating": 0.15,
-        "Dividend Yield": 0.10,
-    }
+    # Missing values are replaced by the neutral midpoint.
+    pe_score = pe_score.fillna(50)
+    fwd_pe_score = fwd_pe_score.fillna(50)
+    upside_score = upside_score.fillna(50)
+    rating_score = rating_score.fillna(50)
+    dividend_score = dividend_score.fillna(50)
 
-    weighted_sum = pd.Series(0.0, index=out.index)
-    available_weight = pd.Series(0.0, index=out.index)
-    available_components = pd.Series(0, index=out.index, dtype=int)
-
-    for col, weight in weights.items():
-        valid = components[col].notna()
-        weighted_sum.loc[valid] += components.loc[valid, col] * weight
-        available_weight.loc[valid] += weight
-        available_components.loc[valid] += 1
-
-    # Re-normalize weights across the metrics that are actually available.
-    out["Internal Rating"] = np.where(
-        available_weight > 0,
-        weighted_sum / available_weight,
-        np.nan
-    )
-    out["Internal Rating"] = pd.Series(out["Internal Rating"], index=out.index).round(0)
-    out["Score Components"] = available_components
+    out["Internal Rating"] = (
+        0.15 * pe_score
+        + 0.30 * fwd_pe_score
+        + 0.30 * upside_score
+        + 0.15 * rating_score
+        + 0.10 * dividend_score
+    ).round(0)
 
     return out
 
@@ -296,12 +267,6 @@ view = st.radio("View", ["Home", "Sector Detail"], horizontal=True, label_visibi
 if view == "Home":
     st.title("Whatsupstock")
     st.caption("Simple stock comparison by sector")
-
-    refresh_col, _ = st.columns([1, 5])
-    with refresh_col:
-        if st.button("↻ Refresh data", use_container_width=True):
-            st.cache_data.clear()
-            st.rerun()
     min_liquidity_m_home = st.number_input("Min. daily $ volume ($M)", 0.0, 500.0, DEFAULT_MIN_DOLLAR_VOLUME / 1_000_000, 5.0, key="home_liquidity")
     min_liquidity_home = min_liquidity_m_home * 1_000_000
     all_rows, sector_rows, sector_data = [], [], {}
@@ -383,23 +348,16 @@ if view == "Home":
             cols = st.columns(len(row_sectors), gap="small")
 
             for offset, (col, sector_name) in enumerate(zip(cols, row_sectors)):
-                sdf = sector_data[sector_name].copy()
-
-                # Keep the card populated even if Yahoo temporarily omits some fundamentals.
-                if sdf["Internal Rating"].notna().any():
-                    sdf = sdf.sort_values(
+                sdf = (
+                    sector_data[sector_name]
+                    .sort_values(
                         ["Internal Rating", "Analyst Upside"],
                         ascending=[False, False],
                         na_position="last"
                     )
-                else:
-                    sdf = sdf.sort_values(
-                        ["Market Cap", "Dollar Volume"],
-                        ascending=[False, False],
-                        na_position="last"
-                    )
-
-                sdf = sdf.head(3).reset_index(drop=True)
+                    .head(3)
+                    .reset_index(drop=True)
+                )
 
                 accent = sector_colors[(row_start + offset) % len(sector_colors)]
                 icon = sector_icons.get(sector_name, "●")
@@ -409,7 +367,7 @@ if view == "Home":
                     ticker = html.escape(str(stock.get("Ticker", "—")))
                     company = html.escape(str(stock.get("Company", "—")))
                     rating = stock.get("Internal Rating", np.nan)
-                    rating_txt = "N/A" if pd.isna(rating) else f"{rating:.0f}"
+                    rating_txt = "—" if pd.isna(rating) else f"{rating:.0f}"
 
                     rows_html += f"""
                     <div style="
