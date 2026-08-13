@@ -267,8 +267,9 @@ if view == "Home":
     st.caption("Simple stock comparison by sector")
     min_liquidity_m_home = st.number_input("Min. daily $ volume ($M)", 0.0, 500.0, DEFAULT_MIN_DOLLAR_VOLUME / 1_000_000, 5.0, key="home_liquidity")
     min_liquidity_home = min_liquidity_m_home * 1_000_000
-    all_rows, sector_rows = [], []
+    all_rows, sector_rows, sector_data = [], [], {}
     progress = st.progress(0, text="Loading sectors...")
+
     for i, (sector_name, symbols) in enumerate(SECTORS.items(), start=1):
         sector_df = load_sector(symbols)
         if not sector_df.empty:
@@ -279,62 +280,71 @@ if view == "Home":
                 sector_df.loc[sector_df["P/E"] <= 0, "P/E"] = np.nan
                 sector_df.loc[sector_df["Forward P/E"] <= 0, "Forward P/E"] = np.nan
                 sector_df["Sector"] = sector_name
+                sector_df["Sector Forward P/E"] = sector_df["Forward P/E"].median(skipna=True)
                 all_rows.append(sector_df)
-                sector_rows.append({"Sector": sector_name, "Sector Rating": sector_df["Internal Rating"].mean(), "Median P/E": sector_df["P/E"].median(skipna=True), "Median Forward P/E": sector_df["Forward P/E"].median(skipna=True), "Avg Analyst Upside": sector_df["Analyst Upside"].mean(skipna=True), "Avg Dividend Yield": sector_df["Forward Dividend Yield"].mean(skipna=True), "Companies": len(sector_df)})
+                sector_data[sector_name] = sector_df.copy()
+                sector_rows.append({
+                    "Sector": sector_name,
+                    "Sector Rating": sector_df["Internal Rating"].mean(),
+                    "Median P/E": sector_df["P/E"].median(skipna=True),
+                    "Median Forward P/E": sector_df["Forward P/E"].median(skipna=True),
+                    "Avg Analyst Upside": sector_df["Analyst Upside"].mean(skipna=True),
+                    "Avg Dividend Yield": sector_df["Forward Dividend Yield"].mean(skipna=True),
+                })
         progress.progress(i / len(SECTORS), text=f"Loading sectors... {i}/{len(SECTORS)}")
     progress.empty()
+
     if all_rows:
         combined = pd.concat(all_rows, ignore_index=True)
-        top10 = combined.sort_values(["Internal Rating", "Analyst Upside"], ascending=[False, False], na_position="last").head(10).reset_index(drop=True)
+
+        # 1. All Sectors
         st.subheader("Top 10 — All Sectors")
         st.caption("Highest Internal Ratings across the app. Each company is scored relative to peers in its own sector.")
-        top_display = top10[["Ticker", "Company", "Sector", "Price", "Forward P/E", "Forward Dividend Yield", "Analyst Upside", "Internal Rating"]].copy()
+        top10 = combined.sort_values(["Internal Rating", "Analyst Upside"], ascending=[False, False], na_position="last").head(10).reset_index(drop=True)
+        top_display = top10[["Ticker", "Company", "Sector", "Price", "Forward P/E", "Sector Forward P/E", "Forward Dividend Yield", "Analyst Upside", "Internal Rating"]].copy()
         top_display["Forward Dividend Yield"] *= 100
         top_display["Analyst Upside"] *= 100
-        st.dataframe(top_display.style.format({"Price":"${:,.2f}", "Forward P/E":"{:.1f}x", "Forward Dividend Yield":"{:.1f}%", "Analyst Upside":"{:.1f}%", "Internal Rating":"{:.0f}"}, na_rep="—"), use_container_width=True, hide_index=True, height=390)
+        top_display.rename(columns={"Sector Forward P/E":"Sector Fwd P/E", "Forward Dividend Yield":"Dividend Yield"}, inplace=True)
+        st.dataframe(top_display.style.format({"Price":"${:,.2f}", "Forward P/E":"{:.1f}x", "Sector Fwd P/E":"{:.1f}x", "Dividend Yield":"{:.1f}%", "Analyst Upside":"{:+.1f}%", "Internal Rating":"{:.0f}"}, na_rep="—"), use_container_width=True, hide_index=True, height=390)
+
+        st.divider()
+
+        # 2. Top 3 by sector
+        st.subheader("Top 3 — Each Sector")
+        st.caption("Three highest-rated eligible stocks in each sector.")
+        sector_names = list(sector_data.keys())
+        for row_start in range(0, len(sector_names), 4):
+            cols = st.columns(4)
+            for col, sector_name in zip(cols, sector_names[row_start:row_start + 4]):
+                sdf = sector_data[sector_name].sort_values(["Internal Rating", "Analyst Upside"], ascending=[False, False], na_position="last").head(3).reset_index(drop=True)
+                with col:
+                    st.markdown(f"**{sector_name}**")
+                    mini = sdf[["Ticker", "Forward P/E", "Analyst Upside", "Internal Rating"]].copy()
+                    mini["Analyst Upside"] *= 100
+                    mini.rename(columns={"Forward P/E":"Fwd P/E", "Analyst Upside":"Upside", "Internal Rating":"Rating"}, inplace=True)
+                    st.dataframe(mini.style.format({"Fwd P/E":"{:.1f}x", "Upside":"{:+.1f}%", "Rating":"{:.0f}"}, na_rep="—"), use_container_width=True, hide_index=True, height=145)
+
+        st.divider()
+
+        # 3. Sector Overview
         st.subheader("Sector Overview")
+        st.caption("Sectors ordered by average analyst upside, highest first.")
+        sector_summary = pd.DataFrame(sector_rows).sort_values("Avg Analyst Upside", ascending=False, na_position="last").reset_index(drop=True)
+        left, right = st.columns([1.15, 1.35], gap="large")
+        with left:
+            chart_df = sector_summary[["Sector", "Avg Analyst Upside"]].copy()
+            chart_df["Avg Analyst Upside"] *= 100
+            st.bar_chart(chart_df.set_index("Sector")["Avg Analyst Upside"], horizontal=True, height=520)
+            st.caption("Average analyst upside by sector.")
+        with right:
+            sector_table = sector_summary[["Sector", "Median P/E", "Median Forward P/E", "Avg Analyst Upside", "Avg Dividend Yield"]].copy()
+            sector_table["Avg Analyst Upside"] *= 100
+            sector_table["Avg Dividend Yield"] *= 100
+            sector_table.rename(columns={"Median Forward P/E":"Median Fwd P/E", "Avg Analyst Upside":"Analyst Upside", "Avg Dividend Yield":"Dividend Yield"}, inplace=True)
+            st.dataframe(sector_table.style.format({"Median P/E":"{:.1f}x", "Median Fwd P/E":"{:.1f}x", "Analyst Upside":"{:+.1f}%", "Dividend Yield":"{:.1f}%"}, na_rep="—"), use_container_width=True, hide_index=True, height=520)
 
-        sector_summary = pd.DataFrame(sector_rows).sort_values(
-            "Avg Analyst Upside", ascending=False
-        ).reset_index(drop=True)
-
-        chart_df = sector_summary[["Sector", "Avg Analyst Upside"]].copy()
-        chart_df["Avg Analyst Upside"] = chart_df["Avg Analyst Upside"] * 100
-        chart_df = chart_df.set_index("Sector")
-
-        st.bar_chart(
-            chart_df["Avg Analyst Upside"],
-            horizontal=True,
-            height=380,
-        )
-        st.caption("Average analyst upside by sector.")
-
-        sector_table = sector_summary.copy()
-        sector_table["Avg Analyst Upside"] *= 100
-        sector_table["Avg Dividend Yield"] *= 100
-
-        st.dataframe(
-            sector_table.style.format(
-                {
-                    "Median P/E": "{:.1f}x",
-                    "Median Forward P/E": "{:.1f}x",
-                    "Avg Analyst Upside": "{:.1f}%",
-                    "Avg Dividend Yield": "{:.1f}%",
-                    "Attractive": "{:.0f}",
-                    "Neutral": "{:.0f}",
-                    "Unattractive": "{:.0f}",
-                    "Companies": "{:.0f}",
-                },
-                na_rep="—",
-            ),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        st.caption(
-            "Sector overview combines valuation, analyst upside, dividends, and the distribution "
-            "of Internal Ratings across the eligible companies."
-        )
+        st.divider()
+        st.caption("Data: Yahoo Finance via yfinance · For informational purposes only · Market and analyst data may be delayed or unavailable.")
     else:
         st.warning("No companies passed the selected liquidity filter.")
     st.stop()
@@ -542,8 +552,8 @@ if selected_rows:
         )
 
 st.caption(
-    "Internal Rating (0–100): P/E 15% + Forward P/E 25% + Analyst Upside 25% + "
-    "Analyst Rating 15% + Dividend Yield 20%. "
+    "Internal Rating (0–100): P/E 15% + Forward P/E 30% + Analyst Upside 30% + "
+    "Analyst Rating 15% + Dividend Yield 10%. "
     "It is a relative score within the selected peer group, not an investment recommendation."
 )
 
@@ -578,6 +588,6 @@ with st.expander("Liquidity and raw selection details"):
 
 st.divider()
 st.caption(
-    "Data source: Yahoo Finance via yfinance. MVP for personal/research use. "
-    "Market and analyst fields may occasionally be unavailable or delayed."
+    "Data: Yahoo Finance via yfinance · For informational purposes only · "
+    "Market and analyst data may be delayed or unavailable."
 )
