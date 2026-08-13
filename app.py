@@ -5,7 +5,6 @@ import numpy as np
 import yfinance as yf
 import html
 import textwrap
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 st.set_page_config(page_title="Whatsupstock", page_icon="📊", layout="wide")
@@ -144,8 +143,7 @@ def fetch_fundamentals(symbol):
         except Exception:
             pass
 
-        # Back off progressively to reduce Yahoo throttling.
-        time.sleep(0.8 * (attempt + 1))
+        # Retry immediately; caching limits repeated requests across app runs.
 
     info = best or {}
 
@@ -211,9 +209,6 @@ def load_sector(symbols_tuple, max_stocks=MAX_STOCKS):
         except Exception:
             fundamentals.append({"Ticker": symbol, "Company": symbol})
 
-        # Gentle spacing between ticker-level fundamental calls.
-        if idx < len(symbols) - 1:
-            time.sleep(0.18)
 
     fdf = pd.DataFrame(fundamentals)
     out = market.merge(fdf, on="Ticker", how="outer")
@@ -348,7 +343,7 @@ if view == "Home":
     for i, (sector_name, symbols) in enumerate(SECTORS.items(), start=1):
         sector_df = load_sector(
             tuple(symbols),
-            max_stocks=MAX_STOCKS
+            max_stocks=5
         )
         if not sector_df.empty:
                 sector_df = add_internal_score(sector_df)
@@ -374,7 +369,7 @@ if view == "Home":
 
         # 1. All Sectors
         st.subheader("Top 10 — All Sectors")
-        st.caption("Highest Internal Ratings across the app. Each company is scored relative to peers in its own sector.")
+        st.caption("Highest Internal Ratings across all covered sectors.")
         top10 = combined.sort_values(["Internal Rating", "Analyst Upside"], ascending=[False, False], na_position="last").head(10).reset_index(drop=True)
         top_display = top10[["Ticker", "Company", "Sector", "Price", "Forward P/E", "Sector Forward P/E", "Forward Dividend Yield", "Analyst Upside", "Internal Rating"]].copy()
         top_display["Forward Dividend Yield"] *= 100
@@ -384,138 +379,7 @@ if view == "Home":
 
         st.divider()
 
-        # 2. Top 3 by sector — compact dashboard cards
-        st.subheader("Top 3 — Each Sector")
-        st.caption("Top 3 companies by Internal Rating in each sector.")
-
-        sector_icons = {
-            "Restaurants": "🍽️",
-            "Semiconductors": "◈",
-            "Software": "⌘",
-            "Technology Hardware": "▣",
-            "Internet & Digital Platforms": "◎",
-            "Payments & Financial Services": "▤",
-            "Banks": "🏦",
-            "Insurance": "◆",
-            "Pharma": "⚕",
-            "Energy": "⚡",
-            "Retail": "🛍",
-            "Auto": "🚗",
-            "Aerospace & Defense": "✈",
-            "Industrials": "🏭",
-            "Telecom": "⌁",
-            "Consumer Brands": "◉",
-        }
-
-        sector_colors = [
-            "#4f46e5", "#16a34a", "#7c3aed", "#ea580c",
-            "#0891b2", "#db2777", "#2563eb", "#9333ea",
-            "#059669", "#ca8a04", "#dc2626", "#0284c7",
-            "#4f46e5", "#c2410c", "#65a30d", "#0f766e"
-        ]
-
-        sector_names = list(sector_data.keys())
-
-        for row_start in range(0, len(sector_names), 4):
-            row_sectors = sector_names[row_start:row_start + 4]
-            cols = st.columns(len(row_sectors), gap="small")
-
-            for offset, (col, sector_name) in enumerate(zip(cols, row_sectors)):
-                sdf = (
-                    sector_data[sector_name]
-                    .sort_values(
-                        ["Internal Rating", "Analyst Upside"],
-                        ascending=[False, False],
-                        na_position="last"
-                    )
-                    .head(3)
-                    .reset_index(drop=True)
-                )
-
-                accent = sector_colors[(row_start + offset) % len(sector_colors)]
-                icon = sector_icons.get(sector_name, "●")
-
-                rows_html = ""
-                for rank, (_, stock) in enumerate(sdf.iterrows(), start=1):
-                    ticker = html.escape(str(stock.get("Ticker", "—")))
-                    company = html.escape(str(stock.get("Company", "—")))
-                    rating = stock.get("Internal Rating", np.nan)
-                    rating_txt = "—" if pd.isna(rating) else f"{rating:.0f}"
-
-                    rows_html += f"""
-                    <div style="
-                        display:grid;
-                        grid-template-columns:22px 48px minmax(0,1fr) 34px;
-                        align-items:center;
-                        gap:5px;
-                        padding:5px 0;
-                        font-size:11px;
-                        line-height:1.15;
-                    ">
-                        <span style="color:#64748b;">{rank}</span>
-                        <span style="font-weight:650;color:#0f172a;">{ticker}</span>
-                        <span style="
-                            color:#334155;
-                            white-space:nowrap;
-                            overflow:hidden;
-                            text-overflow:ellipsis;
-                        " title="{company}">{company}</span>
-                        <span style="font-weight:700;color:#16a34a;text-align:right;">{rating_txt}</span>
-                    </div>
-                    """
-
-                card_html = f"""
-                <div style="
-                    border:1px solid #dbe2ea;
-                    border-radius:8px;
-                    padding:10px 11px 8px 11px;
-                    background:white;
-                    min-height:150px;
-                    box-shadow:0 1px 2px rgba(15,23,42,0.03);
-                    margin-bottom:8px;
-                ">
-                    <div style="
-                        font-size:13px;
-                        font-weight:750;
-                        color:{accent};
-                        margin-bottom:9px;
-                        white-space:nowrap;
-                        overflow:hidden;
-                        text-overflow:ellipsis;
-                    " title="{html.escape(sector_name)}">
-                        <span style="margin-right:5px;">{icon}</span>{html.escape(sector_name)}
-                    </div>
-
-                    <div style="
-                        display:grid;
-                        grid-template-columns:22px 48px minmax(0,1fr) 34px;
-                        gap:5px;
-                        color:#64748b;
-                        font-size:9px;
-                        padding-bottom:4px;
-                        border-bottom:1px solid #eef2f6;
-                    ">
-                        <span>#</span>
-                        <span>Ticker</span>
-                        <span>Company</span>
-                        <span style="text-align:right;">Rating</span>
-                    </div>
-
-                    {rows_html}
-                </div>
-                """
-
-                with col:
-                    compact_card_html = " ".join(
-                        line.strip()
-                        for line in textwrap.dedent(card_html).splitlines()
-                        if line.strip()
-                    )
-                    st.markdown(compact_card_html, unsafe_allow_html=True)
-
-        st.divider()
-
-        # 3. Sector Overview
+        # 2. Sector Overview
         st.subheader("Sector Overview")
         st.caption("Sectors ordered by average analyst upside, highest first.")
         sector_summary = pd.DataFrame(sector_rows).sort_values("Avg Analyst Upside", ascending=False, na_position="last").reset_index(drop=True)
