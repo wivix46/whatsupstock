@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 import html
+import textwrap
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 st.set_page_config(page_title="Whatsupstock", page_icon="📊", layout="wide")
@@ -28,7 +30,6 @@ SECTORS = {
 }
 
 MAX_STOCKS = 10
-DEFAULT_MIN_DOLLAR_VOLUME = 25_000_000
 
 def safe_num(value):
     try:
@@ -67,121 +68,162 @@ def rating_label(info):
     }
     return mapping.get(key, key.replace("_", " ").title() if key else "—")
 
-def get_price_targets(ticker_obj):
-    try:
-        targets = ticker_obj.get_analyst_price_targets()
-        if not targets:
-            targets = ticker_obj.analyst_price_targets
-        if isinstance(targets, dict):
-            return (
-                safe_num(targets.get("current")),
-                safe_num(targets.get("mean")),
-                safe_num(targets.get("median")),
-                safe_num(targets.get("high")),
-                safe_num(targets.get("low")),
-            )
-    except Exception:
-        pass
-    return np.nan, np.nan, np.nan, np.nan, np.nan
 
-def get_avg_volume(ticker_obj, info):
-    avg_volume = safe_num(info.get("averageVolume"))
-    if not pd.isna(avg_volume) and avg_volume > 0:
-        return avg_volume
+@st.cache_data(ttl=1800, show_spinner=False)
+def batch_market_data(symbols_tuple):
+    """One batched Yahoo request for recent prices."""
+    symbols = list(symbols_tuple)
+    rows = []
 
     try:
-        hist = ticker_obj.history(period="1mo", interval="1d", auto_adjust=False)
-        if not hist.empty and "Volume" in hist:
-            return safe_num(hist["Volume"].tail(20).mean())
+        hist = yf.download(
+            tickers=symbols,
+            period="5d",
+            interval="1d",
+            auto_adjust=False,
+            progress=False,
+            group_by="ticker",
+            threads=True,
+        )
     except Exception:
-        pass
-    return np.nan
+        hist = pd.DataFrame()
 
-def fetch_one(symbol):
-    t = yf.Ticker(symbol)
-
-    try:
-        info = t.info or {}
-    except Exception:
-        info = {}
-
-    price = safe_num(
-        info.get("currentPrice")
-        or info.get("regularMarketPrice")
-        or info.get("previousClose")
-    )
-
-    if pd.isna(price):
+    for symbol in symbols:
+        price = np.nan
         try:
-            fast = t.fast_info
-            price = safe_num(getattr(fast, "last_price", np.nan))
+            sdf = hist.copy() if len(symbols) == 1 else hist[symbol].copy()
+            if not sdf.empty and "Close" in sdf.columns:
+                closes = pd.to_numeric(sdf["Close"], errors="coerce").dropna()
+                if not closes.empty:
+                    price = safe_num(closes.iloc[-1])
         except Exception:
             pass
+
+        rows.append({"Ticker": symbol, "Batch Price": price})
+
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_fundamentals(symbol):
+    """
+    One detailed Yahoo/yfinance call per selected ticker.
+    Analyst target fields are taken from the same info payload whenever available,
+    avoiding a second analyst-target request.
+    """
+    info = {}
+
+    # Small retry, deliberately sequential inside each ticker.
+    for attempt in range(2):
+        try:
+            t = yf.Ticker(symbol)
+            info = t.info or {}
+            if info:
+                break
+        except Exception:
+            info = {}
+
+        if attempt == 0:
+            time.sleep(0.4)
 
     market_cap = safe_num(info.get("marketCap"))
     trailing_pe = safe_num(info.get("trailingPE"))
     forward_pe = safe_num(info.get("forwardPE"))
     eps = safe_num(info.get("trailingEps"))
 
-    # Calculate yield from annual dividend rate / current share price.
-    # This avoids ambiguity in yfinance's dividendYield units.
     dividend_rate = safe_num(info.get("dividendRate"))
-    if not pd.isna(dividend_rate) and not pd.isna(price) and price > 0:
-        dividend_yield = dividend_rate / price
-    else:
-        dividend_yield = np.nan
-    if not pd.isna(dividend_yield) and (dividend_yield < 0 or dividend_yield > 0.20):
-        dividend_yield = np.nan
 
     rating = rating_label(info)
-    target_current, target_mean, target_median, target_high, target_low = get_price_targets(t)
 
-    if pd.isna(price) and not pd.isna(target_current):
-        price = target_current
-
-    upside = (
-        (target_mean / price - 1)
-        if not pd.isna(target_mean) and not pd.isna(price) and price != 0
-        else np.nan
-    )
-
-    avg_volume = get_avg_volume(t, info)
-    dollar_volume = (
-        price * avg_volume
-        if not pd.isna(price) and not pd.isna(avg_volume)
-        else np.nan
-    )
+    # Prefer target fields already present in the info payload.
+    target_mean = safe_num(info.get("targetMeanPrice"))
+    target_high = safe_num(info.get("targetHighPrice"))
+    target_low = safe_num(info.get("targetLowPrice"))
 
     return {
         "Ticker": symbol,
         "Company": info.get("shortName") or info.get("longName") or symbol,
-        "Price": price,
         "Market Cap": market_cap,
         "P/E": trailing_pe,
         "Forward P/E": forward_pe,
         "EPS": eps,
-        "Forward Dividend Yield": dividend_yield,
+        "Dividend Rate": dividend_rate,
         "Analyst Rating": rating,
         "Analyst Target": target_mean,
         "Analyst Target Low": target_low,
         "Analyst Target High": target_high,
-        "Analyst Upside": upside,
-        "Avg Volume": avg_volume,
-        "Dollar Volume": dollar_volume,
     }
 
-@st.cache_data(ttl=900, show_spinner=False)
-def load_sector(symbols):
-    rows = []
-    with ThreadPoolExecutor(max_workers=6) as executor:
-        futures = {executor.submit(fetch_one, s): s for s in symbols}
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_sector(symbols_tuple, max_stocks=MAX_STOCKS):
+    """
+    Load up to max_stocks from the curated sector universe.
+    No liquidity filter is applied.
+    """
+    symbols = list(symbols_tuple)
+    market = batch_market_data(tuple(symbols))
+    if market.empty:
+        return pd.DataFrame()
+
+    order_map = {symbol: i for i, symbol in enumerate(symbols)}
+    market["_order"] = market["Ticker"].map(order_map)
+
+    selected = (
+        market
+        .sort_values("_order")
+        .head(int(max_stocks))
+        .reset_index(drop=True)
+    )
+
+    selected_symbols = selected["Ticker"].tolist()
+
+    fundamentals = []
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {
+            executor.submit(fetch_fundamentals, symbol): symbol
+            for symbol in selected_symbols
+        }
         for future in as_completed(futures):
             symbol = futures[future]
             try:
-                rows.append(future.result())
+                fundamentals.append(future.result())
             except Exception:
-                rows.append({"Ticker": symbol, "Company": symbol})
-    return pd.DataFrame(rows)
+                fundamentals.append({"Ticker": symbol, "Company": symbol})
+
+    fdf = pd.DataFrame(fundamentals)
+    out = selected.merge(fdf, on="Ticker", how="left")
+
+    out["Price"] = out["Batch Price"]
+
+    out["Forward Dividend Yield"] = np.nan
+    valid_div = (
+        out.get("Dividend Rate", pd.Series(index=out.index, dtype=float)).notna()
+        & out["Price"].notna()
+        & (out["Price"] > 0)
+    )
+    out.loc[valid_div, "Forward Dividend Yield"] = (
+        out.loc[valid_div, "Dividend Rate"] / out.loc[valid_div, "Price"]
+    )
+
+    out.loc[
+        (out["Forward Dividend Yield"] < 0)
+        | (out["Forward Dividend Yield"] > 0.20),
+        "Forward Dividend Yield"
+    ] = np.nan
+
+    out["Analyst Upside"] = np.where(
+        out["Analyst Target"].notna()
+        & out["Price"].notna()
+        & (out["Price"] != 0),
+        out["Analyst Target"] / out["Price"] - 1,
+        np.nan,
+    )
+
+    return out.drop(
+        columns=["Batch Price", "Dividend Rate", "_order"],
+        errors="ignore",
+    )
 
 def inverse_percentile(series):
     """Lower is better; returns roughly 0..100 within current peer group."""
@@ -266,17 +308,15 @@ view = st.radio("View", ["Home", "Sector Detail"], horizontal=True, label_visibi
 if view == "Home":
     st.title("Whatsupstock")
     st.caption("Simple stock comparison by sector")
-    min_liquidity_m_home = st.number_input("Min. daily $ volume ($M)", 0.0, 500.0, DEFAULT_MIN_DOLLAR_VOLUME / 1_000_000, 5.0, key="home_liquidity")
-    min_liquidity_home = min_liquidity_m_home * 1_000_000
     all_rows, sector_rows, sector_data = [], [], {}
     progress = st.progress(0, text="Loading sectors...")
 
     for i, (sector_name, symbols) in enumerate(SECTORS.items(), start=1):
-        sector_df = load_sector(symbols)
+        sector_df = load_sector(
+            tuple(symbols),
+            max_stocks=MAX_STOCKS
+        )
         if not sector_df.empty:
-            sector_df = sector_df[sector_df["Dollar Volume"].fillna(0) >= min_liquidity_home].copy()
-            sector_df = sector_df.sort_values("Market Cap", ascending=False, na_position="last").head(MAX_STOCKS).reset_index(drop=True)
-            if not sector_df.empty:
                 sector_df = add_internal_score(sector_df)
                 sector_df.loc[sector_df["P/E"] <= 0, "P/E"] = np.nan
                 sector_df.loc[sector_df["Forward P/E"] <= 0, "Forward P/E"] = np.nan
@@ -342,8 +382,8 @@ if view == "Home":
 
         sector_names = list(sector_data.keys())
 
-        for row_start in range(0, len(sector_names), 5):
-            row_sectors = sector_names[row_start:row_start + 5]
+        for row_start in range(0, len(sector_names), 4):
+            row_sectors = sector_names[row_start:row_start + 4]
             cols = st.columns(len(row_sectors), gap="small")
 
             for offset, (col, sector_name) in enumerate(zip(cols, row_sectors)):
@@ -432,7 +472,12 @@ if view == "Home":
                 """
 
                 with col:
-                    st.markdown(card_html, unsafe_allow_html=True)
+                    compact_card_html = " ".join(
+                        line.strip()
+                        for line in textwrap.dedent(card_html).splitlines()
+                        if line.strip()
+                    )
+                    st.markdown(compact_card_html, unsafe_allow_html=True)
 
         st.divider()
 
@@ -444,8 +489,46 @@ if view == "Home":
         with left:
             chart_df = sector_summary[["Sector", "Avg Analyst Upside"]].copy()
             chart_df["Avg Analyst Upside"] *= 100
-            st.bar_chart(chart_df.set_index("Sector")["Avg Analyst Upside"], horizontal=True, height=520)
-            st.caption("Average analyst upside by sector.")
+
+            valid_upside = chart_df["Avg Analyst Upside"].dropna()
+            max_abs = max(float(valid_upside.abs().max()), 1.0) if not valid_upside.empty else 1.0
+
+            static_rows = ""
+            for _, chart_row in chart_df.iterrows():
+                sector_label = html.escape(str(chart_row["Sector"]))
+                value = chart_row["Avg Analyst Upside"]
+
+                if pd.isna(value):
+                    value_text = "—"
+                    width = 0
+                    bar_color = "#94a3b8"
+                else:
+                    value_text = f"{value:+.1f}%"
+                    width = min(abs(float(value)) / max_abs * 100, 100)
+                    bar_color = "#2563eb" if value >= 0 else "#dc2626"
+
+                static_rows += (
+                    f'<div style="display:grid;grid-template-columns:150px minmax(80px,1fr) 58px;'
+                    f'align-items:center;gap:8px;margin:8px 0;">'
+                    f'<div style="font-size:12px;color:#334155;white-space:nowrap;overflow:hidden;'
+                    f'text-overflow:ellipsis;" title="{sector_label}">{sector_label}</div>'
+                    f'<div style="height:18px;background:#eef2f7;border-radius:4px;overflow:hidden;">'
+                    f'<div style="height:100%;width:{width:.1f}%;background:{bar_color};'
+                    f'border-radius:4px;"></div></div>'
+                    f'<div style="font-size:12px;font-weight:650;text-align:right;color:#334155;">'
+                    f'{value_text}</div></div>'
+                )
+
+            static_chart_html = (
+                '<div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;'
+                'background:white;min-height:500px;">'
+                '<div style="font-size:12px;color:#64748b;margin-bottom:10px;">'
+                'Average analyst upside by sector</div>'
+                + static_rows +
+                '</div>'
+            )
+
+            st.markdown(static_chart_html, unsafe_allow_html=True)
         with right:
             sector_table = sector_summary[["Sector", "Median P/E", "Median Forward P/E", "Avg Analyst Upside", "Avg Dividend Yield"]].copy()
             sector_table["Avg Analyst Upside"] *= 100
@@ -456,27 +539,18 @@ if view == "Home":
         st.divider()
         st.caption("Data: Yahoo Finance via yfinance · For informational purposes only · Market and analyst data may be delayed or unavailable.")
     else:
-        st.warning("No companies passed the selected liquidity filter.")
+        st.warning("No companies were available for this view.")
     st.stop()
 
 st.title("Whatsupstock")
 st.caption("Simple stock comparison by sector")
 
-top1, top2, top3 = st.columns([2.2, 1.4, 1.4])
+top1, top2 = st.columns([2.2, 1.4])
 
 with top1:
     sector = st.selectbox("Sector", list(SECTORS.keys()), index=0)
 
 with top2:
-    min_liquidity_m = st.number_input(
-        "Min. daily $ volume ($M)",
-        min_value=0.0,
-        max_value=500.0,
-        value=DEFAULT_MIN_DOLLAR_VOLUME / 1_000_000,
-        step=5.0,
-    )
-
-with top3:
     max_stocks = st.number_input(
         "Max. stocks",
         min_value=3,
@@ -486,27 +560,19 @@ with top3:
     )
 
 with st.spinner("Loading market and analyst data..."):
-    raw = load_sector(SECTORS[sector])
+    raw = load_sector(
+        tuple(SECTORS[sector]),
+        max_stocks=int(max_stocks)
+    )
 
 if raw.empty:
     st.error("No data returned.")
     st.stop()
 
-min_liquidity = min_liquidity_m * 1_000_000
-
-eligible = raw[
-    raw["Dollar Volume"].fillna(0) >= min_liquidity
-].copy()
-
-eligible = (
-    eligible
-    .sort_values("Market Cap", ascending=False, na_position="last")
-    .head(int(max_stocks))
-    .reset_index(drop=True)
-)
+eligible = raw.copy().reset_index(drop=True)
 
 if eligible.empty:
-    st.warning("No companies passed the selected liquidity filter.")
+    st.warning("No companies were available for this sector.")
     st.stop()
 
 eligible = add_internal_score(eligible)
@@ -530,11 +596,10 @@ eligible["Internal Rating Label"] = eligible["Internal Rating"].map(internal_rat
 median_pe = eligible["P/E"].median(skipna=True)
 median_forward_pe = eligible["Forward P/E"].median(skipna=True)
 
-c1, c2, c3, c4 = st.columns(4)
+c1, c2, c3 = st.columns(3)
 c1.metric("Companies", len(eligible))
 c2.metric("Median P/E", "—" if pd.isna(median_pe) else f"{median_pe:.1f}x")
 c3.metric("Median Forward P/E", "—" if pd.isna(median_forward_pe) else f"{median_forward_pe:.1f}x")
-c4.metric("Liquidity filter", f">${min_liquidity_m:.0f}M/day")
 
 st.divider()
 
@@ -683,18 +748,6 @@ with st.expander("How the Internal Rating works"):
         """
     )
 
-with st.expander("Liquidity and raw selection details"):
-    liquidity_view = eligible[["Ticker", "Avg Volume", "Dollar Volume"]].copy()
-    liquidity_view["Avg Volume"] = liquidity_view["Avg Volume"] / 1_000_000
-    liquidity_view["Dollar Volume"] = liquidity_view["Dollar Volume"] / 1_000_000
-    st.dataframe(
-        liquidity_view.style.format(
-            {"Avg Volume": "{:.2f}M", "Dollar Volume": "${:.1f}M"},
-            na_rep="—"
-        ),
-        use_container_width=True,
-        hide_index=True,
-    )
 
 st.divider()
 st.caption(
