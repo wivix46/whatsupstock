@@ -28,6 +28,19 @@ SECTORS = {
     "Consumer Brands": ["PG","KO","PEP","PM","MO","CL","KMB","MDLZ","KHC","GIS","HSY","KDP","STZ","MNST"]
 }
 
+HOME_SECTORS = [
+    "Restaurants",
+    "Semiconductors",
+    "Software",
+    "Technology Hardware",
+    "Internet & Digital Platforms",
+    "Banks",
+    "Pharma",
+    "Energy",
+    "Consumer Brands",
+]
+
+
 MAX_STOCKS = 10
 
 def safe_num(value):
@@ -340,7 +353,8 @@ if view == "Home":
     all_rows, sector_rows, sector_data = [], [], {}
     progress = st.progress(0, text="Loading sectors...")
 
-    for i, (sector_name, symbols) in enumerate(SECTORS.items(), start=1):
+    for i, sector_name in enumerate(HOME_SECTORS, start=1):
+        symbols = SECTORS[sector_name]
         sector_df = load_sector(
             tuple(symbols),
             max_stocks=5
@@ -361,7 +375,7 @@ if view == "Home":
                     "Avg Analyst Upside": sector_df["Analyst Upside"].mean(skipna=True),
                     "Avg Dividend Yield": sector_df["Forward Dividend Yield"].mean(skipna=True),
                 })
-        progress.progress(i / len(SECTORS), text=f"Loading sectors... {i}/{len(SECTORS)}")
+        progress.progress(i / len(HOME_SECTORS), text=f"Loading sectors... {i}/{len(HOME_SECTORS)}")
     progress.empty()
 
     if all_rows:
@@ -369,7 +383,7 @@ if view == "Home":
 
         # 1. All Sectors
         st.subheader("Top 10 — All Sectors")
-        st.caption("Highest Internal Ratings across all covered sectors.")
+        st.caption("Highest Internal Ratings across the 9 sectors shown on the Home page.")
         top10 = combined.sort_values(["Internal Rating", "Analyst Upside"], ascending=[False, False], na_position="last").head(10).reset_index(drop=True)
         top_display = top10[["Ticker", "Company", "Sector", "Price", "Forward P/E", "Sector Forward P/E", "Forward Dividend Yield", "Analyst Upside", "Internal Rating"]].copy()
         top_display["Forward Dividend Yield"] *= 100
@@ -379,9 +393,91 @@ if view == "Home":
 
         st.divider()
 
-        # 2. Sector Overview
+        # 2. Top 3 — Each Home Sector
+        st.subheader("Top 3 — Each Sector")
+        st.caption("Top 3 companies by Internal Rating in each Home sector.")
+
+        sector_icons = {
+            "Restaurants": "🍽️",
+            "Semiconductors": "◈",
+            "Software": "⌘",
+            "Technology Hardware": "▣",
+            "Internet & Digital Platforms": "◎",
+            "Banks": "🏦",
+            "Pharma": "⚕",
+            "Energy": "⚡",
+            "Consumer Brands": "◉",
+        }
+
+        sector_colors = [
+            "#4f46e5", "#16a34a", "#7c3aed",
+            "#ea580c", "#0891b2", "#2563eb",
+            "#059669", "#ca8a04", "#0f766e"
+        ]
+
+        sector_names = [s for s in HOME_SECTORS if s in sector_data]
+
+        for row_start in range(0, len(sector_names), 3):
+            row_sectors = sector_names[row_start:row_start + 3]
+            cols = st.columns(3, gap="small")
+
+            for offset, (col, sector_name) in enumerate(zip(cols, row_sectors)):
+                sdf = (
+                    sector_data[sector_name]
+                    .sort_values(
+                        ["Internal Rating", "Analyst Upside"],
+                        ascending=[False, False],
+                        na_position="last"
+                    )
+                    .head(3)
+                    .reset_index(drop=True)
+                )
+
+                accent = sector_colors[(row_start + offset) % len(sector_colors)]
+                icon = sector_icons.get(sector_name, "●")
+
+                rows_html = ""
+                for rank, (_, stock) in enumerate(sdf.iterrows(), start=1):
+                    ticker = html.escape(str(stock.get("Ticker", "—")))
+                    company = html.escape(str(stock.get("Company", "—")))
+                    rating = stock.get("Internal Rating", np.nan)
+                    rating_txt = "—" if pd.isna(rating) else f"{rating:.0f}"
+
+                    rows_html += (
+                        f'<div style="display:grid;grid-template-columns:22px 52px minmax(0,1fr) 38px;'
+                        f'align-items:center;gap:6px;padding:6px 0;font-size:11px;line-height:1.15;">'
+                        f'<span style="color:#64748b;">{rank}</span>'
+                        f'<span style="font-weight:650;color:#0f172a;">{ticker}</span>'
+                        f'<span style="color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" '
+                        f'title="{company}">{company}</span>'
+                        f'<span style="font-weight:700;color:#16a34a;text-align:right;">{rating_txt}</span>'
+                        f'</div>'
+                    )
+
+                card_html = (
+                    f'<div style="border:1px solid #dbe2ea;border-radius:8px;padding:11px 12px 9px 12px;'
+                    f'background:white;min-height:155px;box-shadow:0 1px 2px rgba(15,23,42,0.03);'
+                    f'margin-bottom:10px;">'
+                    f'<div style="font-size:13px;font-weight:750;color:{accent};margin-bottom:9px;'
+                    f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" '
+                    f'title="{html.escape(sector_name)}">'
+                    f'<span style="margin-right:5px;">{icon}</span>{html.escape(sector_name)}</div>'
+                    f'<div style="display:grid;grid-template-columns:22px 52px minmax(0,1fr) 38px;'
+                    f'gap:6px;color:#64748b;font-size:9px;padding-bottom:4px;'
+                    f'border-bottom:1px solid #eef2f6;">'
+                    f'<span>#</span><span>Ticker</span><span>Company</span>'
+                    f'<span style="text-align:right;">Rating</span></div>'
+                    f'{rows_html}</div>'
+                )
+
+                with col:
+                    st.markdown(card_html, unsafe_allow_html=True)
+
+        st.divider()
+
+        # 3. Sector Overview
         st.subheader("Sector Overview")
-        st.caption("Sectors ordered by average analyst upside, highest first.")
+        st.caption("Home sectors ordered by average analyst upside, highest first.")
         sector_summary = pd.DataFrame(sector_rows).sort_values("Avg Analyst Upside", ascending=False, na_position="last").reset_index(drop=True)
         left, right = st.columns([1.15, 1.35], gap="large")
         with left:
