@@ -433,7 +433,12 @@ if view == "Home":
                 """
 
                 with col:
-                    st.markdown(textwrap.dedent(card_html).strip(), unsafe_allow_html=True)
+                    compact_card_html = " ".join(
+                        line.strip()
+                        for line in textwrap.dedent(card_html).splitlines()
+                        if line.strip()
+                    )
+                    st.markdown(compact_card_html, unsafe_allow_html=True)
 
         st.divider()
 
