@@ -3,9 +3,195 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 import html
+import base64
+from pathlib import Path
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+
 st.set_page_config(page_title="Whatsupstock", page_icon="📊", layout="wide")
+
+# ---------- VISUAL THEME ONLY ----------
+# Keep the logo file beside app.py in GitHub. Preferred filename: whatsupstock_logo.png
+LOGO_CANDIDATES = [
+    "whatsupstock_logo.png",
+    "logo.png",
+    "Whatsupstock.png",
+    "whatsupstock.png",
+]
+
+def _logo_data_uri():
+    for filename in LOGO_CANDIDATES:
+        path = Path(__file__).resolve().parent / filename
+        if path.exists():
+            mime = "image/png"
+            if path.suffix.lower() in (".jpg", ".jpeg"):
+                mime = "image/jpeg"
+            elif path.suffix.lower() == ".webp":
+                mime = "image/webp"
+            encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+            return f"data:{mime};base64,{encoded}"
+    return None
+
+def render_brand_header(subtitle=None):
+    logo_uri = _logo_data_uri()
+    if logo_uri:
+        st.markdown(
+            f"""
+            <div class="ws-brand">
+                <img src="{logo_uri}" class="ws-logo" alt="Whatsupstock">
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        # Fallback keeps the app usable until the logo file is uploaded to GitHub.
+        st.markdown(
+            '<div class="ws-wordmark">Whatsup<span>stock</span></div>',
+            unsafe_allow_html=True,
+        )
+    if subtitle:
+        st.markdown(f'<div class="ws-subtitle">{html.escape(subtitle)}</div>', unsafe_allow_html=True)
+
+st.markdown(
+    """
+    <style>
+    :root {
+        --ws-bg: #050b14;
+        --ws-panel: #0a1320;
+        --ws-panel-2: #0d1827;
+        --ws-border: #1d2b3b;
+        --ws-text: #eef4fb;
+        --ws-muted: #8d9bad;
+        --ws-green: #36df49;
+        --ws-green-2: #1fbf3a;
+        --ws-red: #ff5c63;
+    }
+
+    .stApp {
+        background:
+            radial-gradient(circle at 12% 0%, rgba(28,74,112,.13), transparent 28rem),
+            linear-gradient(180deg, #050b14 0%, #07101b 100%);
+        color: var(--ws-text);
+    }
+
+    .block-container {
+        max-width: 1600px;
+        padding-top: 1.25rem;
+        padding-bottom: 3rem;
+    }
+
+    #MainMenu, footer { visibility: hidden; }
+
+    h1, h2, h3, h4, h5, h6, p, label,
+    [data-testid="stCaptionContainer"],
+    [data-testid="stMarkdownContainer"] {
+        color: var(--ws-text);
+    }
+
+    [data-testid="stCaptionContainer"] {
+        color: var(--ws-muted) !important;
+    }
+
+    .ws-brand {
+        display:flex;
+        align-items:flex-start;
+        justify-content:flex-start;
+        margin: 0 0 .15rem 0;
+    }
+
+    .ws-logo {
+        width: 270px;
+        max-width: 44vw;
+        height: 105px;
+        object-fit: cover;
+        object-position: center 68%;
+        border-radius: 12px;
+        display:block;
+    }
+
+    .ws-wordmark {
+        font-size: 2.25rem;
+        font-weight: 800;
+        letter-spacing: -.045em;
+        margin-bottom: .2rem;
+        color: #f8fafc;
+    }
+    .ws-wordmark span { color: var(--ws-green); }
+
+    .ws-subtitle {
+        color: var(--ws-muted);
+        font-size: .95rem;
+        margin: .05rem 0 .55rem 0;
+    }
+
+    /* Home / Sector Detail directly under the brand */
+    div[role="radiogroup"] {
+        gap: .35rem;
+        margin-top: .05rem;
+        margin-bottom: .7rem;
+    }
+    div[role="radiogroup"] label {
+        background: #0a1421;
+        border: 1px solid var(--ws-border);
+        border-radius: 9px;
+        padding: .32rem .75rem;
+    }
+    div[role="radiogroup"] label:hover {
+        border-color: #2a9d43;
+    }
+
+    /* Buttons */
+    .stButton > button {
+        background: #0b1623;
+        color: #eaf2fb;
+        border: 1px solid #26374a;
+        border-radius: 9px;
+    }
+    .stButton > button:hover {
+        border-color: var(--ws-green);
+        color: #fff;
+    }
+    .stButton > button[kind="primary"] {
+        background: #12351e;
+        border-color: #2bc347;
+        color: #effff2;
+    }
+
+    /* Metrics / inputs / expanders */
+    [data-testid="stMetric"],
+    [data-testid="stExpander"],
+    [data-baseweb="select"] > div,
+    [data-testid="stNumberInput"] input {
+        background: var(--ws-panel) !important;
+        border-color: var(--ws-border) !important;
+        color: var(--ws-text) !important;
+    }
+
+    [data-testid="stMetric"] {
+        border: 1px solid var(--ws-border);
+        border-radius: 10px;
+        padding: .75rem 1rem;
+    }
+
+    /* Streamlit dataframes */
+    [data-testid="stDataFrame"] {
+        border: 1px solid var(--ws-border);
+        border-radius: 10px;
+        overflow: hidden;
+        background: var(--ws-panel);
+    }
+
+    hr {
+        border-color: var(--ws-border) !important;
+    }
+
+    a { color: #67e878; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 SECTORS = {
     "Restaurants": ["MCD","SBUX","CMG","YUM","QSR","DRI","TXRH","DPZ","WING","CAVA","CAKE","WEN","JACK","SHAK"],
@@ -318,27 +504,27 @@ def static_sector_overview(sector_summary):
         if pd.isna(value):
             value_text = "—"
             width = 0
-            color = "#94a3b8"
+            color = "#64748b"
         else:
             value_text = f"{value:+.1f}%"
             width = min(abs(float(value)) / max_abs * 100, 100)
-            color = "#2563eb" if value >= 0 else "#dc2626"
+            color = "#35d34a" if value >= 0 else "#ff5c63"
 
         rows_html += (
             f'<div style="display:grid;grid-template-columns:160px minmax(80px,1fr) 60px;'
             f'align-items:center;gap:8px;margin:9px 0;">'
-            f'<div style="font-size:12px;color:#334155;white-space:nowrap;overflow:hidden;'
+            f'<div style="font-size:12px;color:#c8d4e3;white-space:nowrap;overflow:hidden;'
             f'text-overflow:ellipsis;" title="{sector}">{sector}</div>'
-            f'<div style="height:18px;background:#eef2f7;border-radius:4px;overflow:hidden;">'
+            f'<div style="height:18px;background:#142131;border-radius:4px;overflow:hidden;">'
             f'<div style="height:100%;width:{width:.1f}%;background:{color};border-radius:4px;"></div></div>'
-            f'<div style="font-size:12px;font-weight:650;text-align:right;color:#334155;">'
+            f'<div style="font-size:12px;font-weight:650;text-align:right;color:#c8d4e3;">'
             f'{value_text}</div></div>'
         )
 
     return (
-        '<div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;'
+        '<div style="border:1px solid #1d2b3b;border-radius:8px;padding:12px 14px;'
         'background:white;min-height:420px;">'
-        '<div style="font-size:12px;color:#64748b;margin-bottom:10px;">'
+        '<div style="font-size:12px;color:#8d9bad;margin-bottom:10px;">'
         'Average analyst upside by sector</div>'
         + rows_html +
         '</div>'
@@ -368,6 +554,8 @@ def set_top10_sort(metric):
         st.session_state["top10_sort_metric"] = metric
         st.session_state["top10_sort_ascending"] = TOP10_SORT_OPTIONS[metric]["default_ascending"]
 
+render_brand_header("Simple stock comparison by sector")
+
 view = st.radio(
     "View",
     ["Home", "Sector Detail"],
@@ -376,8 +564,6 @@ view = st.radio(
 )
 
 if view == "Home":
-    st.title("Whatsupstock")
-    st.caption("Simple stock comparison by sector")
 
     refresh_col, _ = st.columns([1.1, 5])
     with refresh_col:
@@ -521,7 +707,7 @@ if view == "Home":
             rows_html = ""
             if sdf.empty:
                 rows_html = (
-                    '<div style="font-size:11px;color:#94a3b8;padding:12px 0;">'
+                    '<div style="font-size:11px;color:#718096;padding:12px 0;">'
                     'Insufficient Yahoo data</div>'
                 )
             else:
@@ -533,21 +719,21 @@ if view == "Home":
                         f'<div style="display:grid;grid-template-columns:22px 52px minmax(0,1fr) 38px;'
                         f'align-items:center;gap:6px;padding:6px 0;font-size:11px;">'
                         f'<span style="color:#64748b;">{rank}</span>'
-                        f'<span style="font-weight:650;color:#0f172a;">{ticker}</span>'
-                        f'<span style="color:#334155;white-space:nowrap;overflow:hidden;'
+                        f'<span style="font-weight:650;color:#f3f7fb;">{ticker}</span>'
+                        f'<span style="color:#c8d4e3;white-space:nowrap;overflow:hidden;'
                         f'text-overflow:ellipsis;" title="{company}">{company}</span>'
-                        f'<span style="font-weight:700;color:#16a34a;text-align:right;">{rating}</span>'
+                        f'<span style="font-weight:700;color:#38dc4e;text-align:right;">{rating}</span>'
                         f'</div>'
                     )
 
             card_html = (
-                f'<div style="border:1px solid #dbe2ea;border-radius:8px;padding:11px 12px 9px 12px;'
-                f'background:white;min-height:155px;margin-bottom:10px;">'
+                f'<div style="border:1px solid #1d2b3b;border-radius:8px;padding:11px 12px 9px 12px;'
+                f'background:#0a1320;min-height:155px;margin-bottom:10px;">'
                 f'<div style="font-size:13px;font-weight:750;color:{accent};margin-bottom:9px;">'
                 f'<span style="margin-right:5px;">{icon}</span>{html.escape(sector_name)}</div>'
                 f'<div style="display:grid;grid-template-columns:22px 52px minmax(0,1fr) 38px;'
-                f'gap:6px;color:#64748b;font-size:9px;padding-bottom:4px;'
-                f'border-bottom:1px solid #eef2f6;">'
+                f'gap:6px;color:#8d9bad;font-size:9px;padding-bottom:4px;'
+                f'border-bottom:1px solid #1d2b3b;">'
                 f'<span>#</span><span>Ticker</span><span>Company</span>'
                 f'<span style="text-align:right;">Rating</span></div>'
                 f'{rows_html}</div>'
@@ -617,8 +803,7 @@ if view == "Home":
     )
     st.stop()
 
-st.title("Whatsupstock")
-st.caption("Sector Detail")
+st.markdown("### Sector Detail")
 
 top1, top2 = st.columns([2.2, 1.4])
 
@@ -752,12 +937,12 @@ if selected_rows:
 
             avg_dot = (
                 f'<div style="position:absolute;left:{avg_pos:.1f}%;top:14px;width:14px;height:14px;'
-                f'background:#2f80ed;border:2px solid white;border-radius:50%;transform:translateX(-50%);"></div>'
+                f'background:#35d34a;border:2px solid #07101b;border-radius:50%;transform:translateX(-50%);"></div>'
                 if avg_pos is not None else ""
             )
             current_dot = (
                 f'<div style="position:absolute;left:{current_pos:.1f}%;top:14px;width:14px;height:14px;'
-                f'background:#2d3436;border:2px solid white;border-radius:50%;transform:translateX(-50%);"></div>'
+                f'background:#f3f7fb;border:2px solid #07101b;border-radius:50%;transform:translateX(-50%);"></div>'
                 if current_pos is not None else ""
             )
 
@@ -765,7 +950,7 @@ if selected_rows:
                 f"""
                 <div style="margin:8px 4px 2px 4px;">
                   <div style="position:relative;height:42px;">
-                    <div style="position:absolute;left:0;right:0;top:20px;height:6px;background:#aab2bd;border-radius:6px;"></div>
+                    <div style="position:absolute;left:0;right:0;top:20px;height:6px;background:#26374a;border-radius:6px;"></div>
                     {avg_dot}
                     {current_dot}
                   </div>
