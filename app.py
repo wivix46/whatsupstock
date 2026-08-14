@@ -13,9 +13,9 @@ st.markdown(
     """
     <style>
     :root {
-        --ws-bg:#050b14;
-        --ws-panel:#0a1320;
-        --ws-panel2:#101c2a;
+        --ws-bg:#010715;
+        --ws-panel:#010715;
+        --ws-panel2:#010715;
         --ws-border:#1d2b3b;
         --ws-text:#edf3fa;
         --ws-muted:#8d9bad;
@@ -24,12 +24,12 @@ st.markdown(
     }
 
     html, body, [data-testid="stAppViewContainer"], .stApp {
-        background:#050b14 !important;
+        background:#010715 !important;
         color:var(--ws-text) !important;
     }
 
     [data-testid="stHeader"] {
-        background:#050b14 !important;
+        background:#010715 !important;
         border-bottom:1px solid #142131;
     }
 
@@ -53,10 +53,10 @@ st.markdown(
         position:sticky;
         top:2.7rem;
         z-index:1000;
-        background:rgba(5,11,20,.98);
+        background:#010715;
         backdrop-filter:blur(10px);
         border-bottom:1px solid #142131;
-        padding:.35rem 0 .55rem 0;
+        padding:.85rem 0 .55rem 0;
         margin-bottom:.75rem;
     }
 
@@ -66,7 +66,7 @@ st.markdown(
         height:auto;
         display:block;
         object-fit:contain;
-        margin:0 0 .35rem 0;
+        margin:.30rem 0 .35rem 0;
     }
 
     div[role="radiogroup"] {
@@ -160,6 +160,38 @@ st.markdown(
     .ws-muted { color:#718096 !important; }
 
     hr { border-color:var(--ws-border) !important; }
+
+    /* Force every table/dataframe surface into the same logo background */
+    [data-testid="stDataFrame"],
+    [data-testid="stDataFrame"] > div,
+    [data-testid="stDataFrame"] canvas,
+    [data-testid="stDataFrameResizable"],
+    [data-testid="stTable"],
+    [data-testid="stTable"] table,
+    [data-testid="stTable"] thead,
+    [data-testid="stTable"] tbody,
+    [data-testid="stTable"] tr,
+    [data-testid="stTable"] th,
+    [data-testid="stTable"] td {
+        background:#010715 !important;
+        color:#edf3fa !important;
+        border-color:#1d2b3b !important;
+    }
+
+    .ws-table-wrap,
+    table.ws-table,
+    .ws-table th,
+    .ws-table td {
+        background:#010715 !important;
+    }
+
+    /* Inputs and expanders also remain visually integrated */
+    [data-testid="stExpander"],
+    [data-testid="stMetric"],
+    [data-baseweb="select"] > div,
+    [data-testid="stNumberInput"] input {
+        background:#010715 !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -880,13 +912,13 @@ def style_table(df):
 styled = (
     display.style
     .set_properties(**{
-        "background-color": "#0a1320",
+        "background-color": "#010715",
         "color": "#edf3fa",
         "border-color": "#1d2b3b",
     })
     .set_table_styles([
         {"selector": "th", "props": [
-            ("background-color", "#101c2a"),
+            ("background-color", "#010715"),
             ("color", "#aebbd0"),
             ("border-color", "#26374a"),
         ]},
