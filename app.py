@@ -344,6 +344,30 @@ def static_sector_overview(sector_summary):
         '</div>'
     )
 
+
+TOP10_SORT_OPTIONS = {
+    "Internal Rating": {"column": "Internal Rating", "default_ascending": False},
+    "Analyst Upside": {"column": "Analyst Upside", "default_ascending": False},
+    "Forward P/E": {"column": "Forward P/E", "default_ascending": True},
+    "Dividend Yield": {"column": "Dividend Yield", "default_ascending": False},
+    "P/E": {"column": "P/E", "default_ascending": True},
+}
+
+def init_top10_sort_state():
+    if "top10_sort_metric" not in st.session_state:
+        st.session_state["top10_sort_metric"] = "Internal Rating"
+    if "top10_sort_ascending" not in st.session_state:
+        st.session_state["top10_sort_ascending"] = TOP10_SORT_OPTIONS["Internal Rating"]["default_ascending"]
+
+def set_top10_sort(metric):
+    init_top10_sort_state()
+
+    if st.session_state["top10_sort_metric"] == metric:
+        st.session_state["top10_sort_ascending"] = not st.session_state["top10_sort_ascending"]
+    else:
+        st.session_state["top10_sort_metric"] = metric
+        st.session_state["top10_sort_ascending"] = TOP10_SORT_OPTIONS[metric]["default_ascending"]
+
 view = st.radio(
     "View",
     ["Home", "Sector Detail"],
@@ -377,18 +401,52 @@ if view == "Home":
     st.caption(f"Usable fundamentals loaded for {usable} of {len(combined)} Home stocks.")
 
     st.subheader("Top 10 — All Sectors")
-    st.caption("The Top 10, Top 3 cards and Sector Overview all use this exact same dataset.")
+    st.caption("Click a criterion to rebuild the Top 10 from all Home stocks. Click the same criterion again to reverse the order.")
+
+    init_top10_sort_state()
+
+    metric_cols = st.columns(5, gap="small")
+    metric_names = list(TOP10_SORT_OPTIONS.keys())
+
+    for col, metric in zip(metric_cols, metric_names):
+        with col:
+            is_active = st.session_state["top10_sort_metric"] == metric
+            arrow = ""
+            if is_active:
+                arrow = " ↑" if st.session_state["top10_sort_ascending"] else " ↓"
+
+            if st.button(
+                f"{metric}{arrow}",
+                key=f"top10_sort_{metric}",
+                use_container_width=True,
+                type="primary" if is_active else "secondary",
+            ):
+                set_top10_sort(metric)
+                st.rerun()
+
+    sort_metric = st.session_state["top10_sort_metric"]
+    sort_column = TOP10_SORT_OPTIONS[sort_metric]["column"]
+    sort_ascending = st.session_state["top10_sort_ascending"]
+
+    top10_source = combined[combined[sort_column].notna()].copy()
+
+    # Secondary sort keeps results deterministic when values tie.
+    secondary_column = "Internal Rating" if sort_column != "Internal Rating" else "Analyst Upside"
+    secondary_ascending = False
 
     top10 = (
-        combined[combined["Internal Rating"].notna()]
+        top10_source
         .sort_values(
-            ["Internal Rating","Analyst Upside"],
-            ascending=[False,False],
+            [sort_column, secondary_column],
+            ascending=[sort_ascending, secondary_ascending],
             na_position="last"
         )
         .head(10)
         .reset_index(drop=True)
     )
+
+    direction_text = "lowest first" if sort_ascending else "highest first"
+    st.caption(f"Current ranking: **{sort_metric} — {direction_text}**")
 
     top_display = top10[
         [
