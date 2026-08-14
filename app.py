@@ -27,15 +27,15 @@ SECTORS = {
 }
 
 HOME_UNIVERSE = {
-    "Restaurants": ["MCD","SBUX","CMG","YUM","QSR","DRI","TXRH","DPZ","WING","CAVA"],
-    "Semiconductors": ["NVDA","AVGO","AMD","QCOM","MU","TXN","INTC","ADI","NXPI","MCHP"],
-    "Software": ["MSFT","ORCL","CRM","ADBE","INTU","NOW","PANW","SNOW","PLTR","DDOG"],
-    "Technology Hardware": ["AAPL","DELL","HPE","HPQ","ANET","SMCI","NTAP","WDC","STX","PSTG"],
-    "Internet & Digital Platforms": ["GOOGL","META","NFLX","UBER","ABNB","SPOT","DASH","PINS","RDDT","SNAP"],
-    "Banks": ["JPM","BAC","WFC","C","GS","MS","USB","PNC","TFC","BK"],
-    "Pharma": ["LLY","JNJ","ABBV","MRK","PFE","BMY","AMGN","GILD","REGN","VRTX"],
-    "Energy": ["XOM","CVX","COP","EOG","SLB","MPC","PSX","VLO","OXY","FANG"],
-    "Consumer Brands": ["PG","KO","PEP","PM","MDLZ","MO","CL","KMB","KHC","GIS"],
+    "Restaurants": ["MCD","SBUX","CMG","YUM","QSR","DRI","TXRH"],
+    "Semiconductors": ["NVDA","AVGO","AMD","QCOM","MU","TXN","INTC"],
+    "Software": ["MSFT","ORCL","CRM","ADBE","INTU","NOW","PANW"],
+    "Technology Hardware": ["AAPL","DELL","HPE","HPQ","ANET","SMCI","NTAP"],
+    "Internet & Digital Platforms": ["GOOGL","META","NFLX","UBER","ABNB","SPOT","DASH"],
+    "Banks": ["JPM","BAC","WFC","C","GS","MS","USB"],
+    "Pharma": ["LLY","JNJ","ABBV","MRK","PFE","BMY","AMGN"],
+    "Energy": ["XOM","CVX","COP","EOG","SLB","MPC","PSX"],
+    "Consumer Brands": ["PG","KO","PEP","PM","MDLZ","MO","CL"],
 }
 
 HOME_SECTORS = list(HOME_UNIVERSE.keys())
