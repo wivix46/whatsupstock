@@ -161,6 +161,35 @@ st.markdown(
 
     hr { border-color:var(--ws-border) !important; }
 
+    /* Subtle alternating rows */
+    .ws-table tbody tr:nth-child(even) td {
+        background:#061022 !important;
+    }
+    .ws-table tbody tr:nth-child(odd) td {
+        background:#010715 !important;
+    }
+    .ws-table th {
+        background:#091426 !important;
+    }
+
+    /* Top-3 sector cards: same dark surface + subtle row alternation */
+    .ws-sector-card {
+        background:#010715 !important;
+    }
+    .ws-sector-row:nth-child(even) {
+        background:#061022 !important;
+    }
+
+    /* Extra protection against Streamlit/Pandas white cells */
+    [data-testid="stDataFrame"] tbody tr:nth-child(even) td,
+    [data-testid="stTable"] tbody tr:nth-child(even) td {
+        background:#061022 !important;
+    }
+    [data-testid="stDataFrame"] tbody tr:nth-child(odd) td,
+    [data-testid="stTable"] tbody tr:nth-child(odd) td {
+        background:#010715 !important;
+    }
+
     /* Force every table/dataframe surface into the same logo background */
     [data-testid="stDataFrame"],
     [data-testid="stDataFrame"] > div,
@@ -557,7 +586,7 @@ def static_sector_overview(sector_summary):
             f'align-items:center;gap:8px;margin:9px 0;">'
             f'<div style="font-size:12px;color:#c8d4e3;white-space:nowrap;overflow:hidden;'
             f'text-overflow:ellipsis;" title="{sector}">{sector}</div>'
-            f'<div style="height:18px;background:#142131;border-radius:4px;overflow:hidden;">'
+            f'<div style="height:18px;background:#061022;border-radius:4px;overflow:hidden;">'
             f'<div style="height:100%;width:{width:.1f}%;background:{color};border-radius:4px;"></div></div>'
             f'<div style="font-size:12px;font-weight:650;text-align:right;color:#c8d4e3;">'
             f'{value_text}</div></div>'
@@ -565,7 +594,7 @@ def static_sector_overview(sector_summary):
 
     return (
         '<div style="border:1px solid #1d2b3b;border-radius:8px;padding:12px 14px;'
-        'background:white;min-height:420px;">'
+        'background:#010715;min-height:420px;">'
         '<div style="font-size:12px;color:#8d9bad;margin-bottom:10px;">'
         'Average analyst upside by sector</div>'
         + rows_html +
@@ -769,8 +798,8 @@ if view == "Home":
                     )
 
             card_html = (
-                f'<div style="border:1px solid #1d2b3b;border-radius:8px;padding:11px 12px 9px 12px;'
-                f'background:white;min-height:155px;margin-bottom:10px;">'
+                f'<div class="ws-sector-card" style="border:1px solid #1d2b3b;border-radius:8px;padding:11px 12px 9px 12px;'
+                f'background:#010715;min-height:155px;margin-bottom:10px;">'
                 f'<div style="font-size:13px;font-weight:750;color:{accent};margin-bottom:9px;">'
                 f'<span style="margin-right:5px;">{icon}</span>{html.escape(sector_name)}</div>'
                 f'<div style="display:grid;grid-template-columns:22px 52px minmax(0,1fr) 38px;'
