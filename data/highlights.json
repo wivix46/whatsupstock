@@ -1,0 +1,108 @@
+{
+  "updated_at": "2026-10-14",
+  "note": "Initial editorial selection; manual monthly updates required",
+  "us": [
+    {
+      "Rank": 1,
+      "Ticker": "MSFT",
+      "Company": "Microsoft"
+    },
+    {
+      "Rank": 2,
+      "Ticker": "AMZN",
+      "Company": "Amazon"
+    },
+    {
+      "Rank": 3,
+      "Ticker": "AVGO",
+      "Company": "Broadcom"
+    },
+    {
+      "Rank": 4,
+      "Ticker": "V",
+      "Company": "Visa"
+    },
+    {
+      "Rank": 5,
+      "Ticker": "NVDA",
+      "Company": "Nvidia"
+    },
+    {
+      "Rank": 6,
+      "Ticker": "SPGI",
+      "Company": "S&P Global"
+    },
+    {
+      "Rank": 7,
+      "Ticker": "JPM",
+      "Company": "JPMorgan Chase"
+    },
+    {
+      "Rank": 8,
+      "Ticker": "LLY",
+      "Company": "Eli Lilly"
+    },
+    {
+      "Rank": 9,
+      "Ticker": "BR",
+      "Company": "Broadridge"
+    },
+    {
+      "Rank": 10,
+      "Ticker": "OTIS",
+      "Company": "Otis Worldwide"
+    }
+  ],
+  "europe": [
+    {
+      "Rank": 1,
+      "Ticker": "SAP.DE",
+      "Company": "SAP"
+    },
+    {
+      "Rank": 2,
+      "Ticker": "REL.L",
+      "Company": "RELX"
+    },
+    {
+      "Rank": 3,
+      "Ticker": "ASML.AS",
+      "Company": "ASML"
+    },
+    {
+      "Rank": 4,
+      "Ticker": "MC.PA",
+      "Company": "LVMH"
+    },
+    {
+      "Rank": 5,
+      "Ticker": "ROG.SW",
+      "Company": "Roche"
+    },
+    {
+      "Rank": 6,
+      "Ticker": "RHM.DE",
+      "Company": "Rheinmetall"
+    },
+    {
+      "Rank": 7,
+      "Ticker": "FER.AS",
+      "Company": "Ferrovial"
+    },
+    {
+      "Rank": 8,
+      "Ticker": "RKT.L",
+      "Company": "Reckitt"
+    },
+    {
+      "Rank": 9,
+      "Ticker": "NESN.SW",
+      "Company": "Nestlé"
+    },
+    {
+      "Rank": 10,
+      "Ticker": "NOVO-B.CO",
+      "Company": "Novo Nordisk"
+    }
+  ]
+}
