@@ -3,6 +3,9 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 import html
+import json
+from pathlib import Path
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 st.set_page_config(page_title="Whatsupstock", page_icon="📊", layout="wide")
@@ -632,25 +635,66 @@ with st.container(key="ws_sticky_header"):
     )
     view = st.radio(
         "View",
-        ["Home", "Sector Detail"],
+        ["Highlights", "Rankings", "Sector Detail"],
         horizontal=True,
         label_visibility="collapsed"
     )
 
-if view == "Home":
+if view == "Highlights":
+    st.subheader("Investment Highlights")
+    st.caption("Monthly editorial watchlists · Not live recommendations")
+    highlights_file = Path(__file__).parent / "data" / "highlights.json"
+    if highlights_file.exists():
+        highlights = json.loads(highlights_file.read_text(encoding="utf-8"))
+        st.caption(f"Selection date: {highlights.get('updated_at', 'Not available')}")
+        cols = st.columns(2)
+        for col, region, heading in zip(cols, ["us", "europe"], ["US Top 10", "Europe Top 10"]):
+            with col:
+                st.markdown(f"### {heading}")
+                rows = highlights.get(region, [])
+                if rows:
+                    display_rows = pd.DataFrame(rows)
+                    if {"Rank", "Ticker", "Company"}.issubset(display_rows.columns):
+                        render_dark_table(display_rows, ["Rank", "Ticker", "Company"])
+                    else:
+                        st.warning("Highlights file has an unexpected format.")
+                else:
+                    st.info("Selection not yet published.")
+        st.caption("Editorial selections from public sources. Not the algorithmic Internal Rating.")
+    else:
+        st.info("Monthly selections will appear here when published.")
+    st.stop()
+
+if view == "Rankings":
 
     refresh_col, _ = st.columns([1.1, 5])
     with refresh_col:
-        if st.button("↻ Refresh Home data", use_container_width=True):
-            st.cache_data.clear()
+        if st.button("↻ Reload Rankings", use_container_width=True):
+            # Rankings are updated daily via GitHub Actions.
+            # Refreshing the page does not request all 63 stocks again.
             st.rerun()
 
-    with st.spinner("Loading Home data..."):
-        combined = home_dataset()
+    snapshot_file = Path(__file__).parent / "data" / "rankings_snapshot.json"
+    snapshot_date = None
+    combined = pd.DataFrame()
+    if snapshot_file.exists():
+        try:
+            payload = json.loads(snapshot_file.read_text(encoding="utf-8"))
+            combined = pd.DataFrame(payload["rows"])
+            snapshot_date = payload.get("updated_at")
+        except (ValueError, KeyError, TypeError, OSError):
+            combined = pd.DataFrame()
 
     if combined.empty:
-        st.error("Yahoo Finance did not return enough data for the Home page.")
+        st.warning("Rankings are temporarily unavailable: no valid saved snapshot was found. The application will not query Yahoo Finance on page load.")
         st.stop()
+
+    required_columns = ["Ticker", "Company", "Sector", "Price", "Forward P/E", "P/E", "EPS", "Analyst Target", "Dividend Yield", "Analyst Upside", "Internal Rating", "Sector Forward P/E"]
+    missing_columns = [column for column in required_columns if column not in combined.columns]
+    if missing_columns:
+        st.error("Saved rankings file has an incompatible format. Please check the last successful GitHub Actions run.")
+        st.stop()
+    st.caption(f"Rankings last updated: {snapshot_date or 'Unknown'} · Saved data")
 
     usable = (
         combined[["P/E","Forward P/E","EPS","Analyst Target"]]
@@ -735,7 +779,7 @@ if view == "Home":
 
     st.divider()
     st.subheader("Top 3 — Each Sector")
-    st.caption("No new Yahoo requests are made here.")
+    st.caption("Based on the latest saved ranking snapshot.")
 
     sector_icons = {
         "Restaurants":"🍽️",
