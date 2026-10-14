@@ -640,29 +640,86 @@ with st.container(key="ws_sticky_header"):
         label_visibility="collapsed"
     )
 
+
 if view == "Highlights":
     st.subheader("Investment Highlights")
-    st.caption("Monthly editorial watchlists · Not live recommendations")
+    st.caption("Monthly editorial selections · Market indicators updated separately")
     highlights_file = Path(__file__).parent / "data" / "highlights.json"
-    if highlights_file.exists():
-        highlights = json.loads(highlights_file.read_text(encoding="utf-8"))
-        st.caption(f"Selection date: {highlights.get('updated_at', 'Not available')}")
-        cols = st.columns(2)
-        for col, region, heading in zip(cols, ["us", "europe"], ["US Top 10", "Europe Top 10"]):
-            with col:
-                st.markdown(f"### {heading}")
-                rows = highlights.get(region, [])
-                if rows:
-                    display_rows = pd.DataFrame(rows)
-                    if {"Rank", "Ticker", "Company"}.issubset(display_rows.columns):
-                        render_dark_table(display_rows, ["Rank", "Ticker", "Company"])
-                    else:
-                        st.warning("Highlights file has an unexpected format.")
-                else:
-                    st.info("Selection not yet published.")
-        st.caption("Editorial selections from public sources. Not the algorithmic Internal Rating.")
-    else:
+    metrics_file = Path(__file__).parent / "data" / "highlights_metrics.json"
+    if not highlights_file.exists():
         st.info("Monthly selections will appear here when published.")
+        st.stop()
+
+    highlights = json.loads(highlights_file.read_text(encoding="utf-8"))
+    metrics_payload = json.loads(metrics_file.read_text(encoding="utf-8")) if metrics_file.exists() else {}
+    metrics = metrics_payload.get("stocks", {})
+    st.caption(f"Selection: {highlights.get('updated_at', '—')} · Market data: {metrics_payload.get('updated_at', 'Not yet available')} UTC")
+
+    st.markdown("""
+    <style>
+    .wh-scroll {overflow-x:auto; margin-bottom:1rem}
+    .wh-table {width:100%; border-collapse:collapse; font-size:12px; color:#e7eef9; min-width:610px}
+    .wh-table th {font-size:10px; text-align:left; color:#91a5bf; padding:9px 5px; border-bottom:1px solid #324052; white-space:nowrap}
+    .wh-table td {padding:9px 5px; border-bottom:1px solid #26354b; vertical-align:middle; white-space:nowrap}
+    .wh-table .wh-company {font-weight:600; white-space:normal; min-width:105px}
+    .wh-table .wh-ticker {font-size:10px; color:#8ea3bc}
+    .wh-table .wh-rank {color:#94a3b8}
+    .wh-table .wh-pos {color:#3edb84; font-weight:650}
+    .wh-table .wh-neg {color:#ff6875; font-weight:650}
+    .wh-table .wh-muted {color:#8394ac}
+    .wh-why {font-size:11px; color:#b7c7dd; margin-top:3px; line-height:1.3; white-space:normal}
+    </style>
+    """, unsafe_allow_html=True)
+
+    def wh_pct(value):
+        if not isinstance(value, (float, int)):
+            return '<span class="wh-muted">—</span>'
+        css = "wh-pos" if value >= 0 else "wh-neg"
+        return f'<span class="{css}">{value:+.1f}%</span>'
+
+    def wh_num(value):
+        return f"{value:.1f}x" if isinstance(value, (int, float)) and value > 0 else "—"
+
+    def wh_spark(prices, annual):
+        if not isinstance(prices, list) or len(prices) < 2:
+            return '<span class="wh-muted">—</span>'
+        vals = [float(p) for p in prices if isinstance(p, (int, float)) and p > 0]
+        if len(vals) < 2:
+            return '<span class="wh-muted">—</span>'
+        lo, hi = min(vals), max(vals)
+        rng = hi - lo or 1
+        points = " ".join(f"{i*104/(len(vals)-1):.1f},{29-(v-lo)*24/rng:.1f}" for i, v in enumerate(vals))
+        color = "#3edb84" if isinstance(annual, (int, float)) and annual >= 0 else "#ff6875"
+        return f'<svg width="104" height="34" viewBox="0 0 104 34" role="img" aria-label="12 month price trend"><polyline points="{points}" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+
+    cols = st.columns(2)
+    for col, region, heading in zip(cols, ["us", "europe"], ["US Top 10", "Europe Top 10"]):
+        with col:
+            st.markdown(f"### {heading}")
+            rows = highlights.get(region, [])
+            if not rows:
+                st.info("Selection not yet published.")
+                continue
+            parts = ['<div class="wh-scroll"><table class="wh-table"><thead><tr><th>#</th><th>Company</th><th>1M</th><th>1Y</th><th>Trend</th><th>P/E</th><th>Upside</th></tr></thead><tbody>']
+            for item in rows:
+                ticker = str(item.get("Ticker", ""))
+                company = html.escape(str(item.get("Company", ticker)))
+                safe_ticker = html.escape(ticker)
+                m = metrics.get(ticker, {})
+                why = html.escape(str(item.get("Rationale", "")))
+                reason = f'<div class="wh-why">{why}</div>' if why else ''
+                parts.append(
+                    f'<tr><td class="wh-rank">{html.escape(str(item.get("Rank", "")))}</td>'
+                    f'<td class="wh-company">{company}<div class="wh-ticker">{safe_ticker}</div>{reason}</td>'
+                    f'<td>{wh_pct(m.get("return_1m"))}</td><td>{wh_pct(m.get("return_1y"))}</td>'
+                    f'<td>{wh_spark(m.get("trend_1y"), m.get("return_1y"))}</td>'
+                    f'<td>{wh_num(m.get("pe"))}</td><td>{wh_pct(m.get("analyst_upside"))}</td></tr>'
+                )
+            parts.append('</tbody></table></div>')
+            st.markdown("".join(parts), unsafe_allow_html=True)
+    st.caption("1M / 1Y: split-adjusted price performance (dividends excluded) · P/E: trailing earnings multiple · Upside: analyst target vs latest price · —: unavailable. Not investment advice.")
+    if not metrics:
+        st.info("The market indicators will appear after the first successful Highlights data update on GitHub Actions.")
     st.stop()
 
 if view == "Rankings":
